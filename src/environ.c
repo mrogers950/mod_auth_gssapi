@@ -43,6 +43,52 @@ static apr_status_t mag_mc_name_attrs_cleanup(void *data)
     return 0;
 }
 
+static apr_status_t mag_mc_req_name_attrs_cleanup(void *data)
+{
+    struct mag_conn *mc = (struct mag_conn *)data;
+
+    free(mc->required_name_attrs);
+    free(mc->required_name_vals);
+    mc->required_name_attrs = NULL;
+    mc->required_name_vals = NULL;
+    return 0;
+}
+
+static void mc_add_req_name_attribute(request_rec *req,
+                                      struct mag_conn *mc,
+                                      gss_buffer_desc name,
+                                      gss_buffer_desc value)
+{
+    size_t count;
+
+    for (count = 0; mc->required_name_attrs != NULL &&
+                    mc->required_name_attrs[count] != NULL; count++);
+
+    if (count % 16 == 0) {
+        size_t size = sizeof(*mc->required_name_attrs) * (count + 16 + 1);
+        mc->required_name_attrs = realloc(mc->required_name_attrs, size);
+        mc->required_name_vals = realloc(mc->required_name_vals, size);
+        if (mc->required_name_attrs == NULL || mc->required_name_vals == NULL) {
+            apr_pool_abort_get(mc->pool)(ENOMEM);
+        }
+        apr_pool_userdata_setn(mc, GSS_NAME_ATTR_USERDATA,
+                               mag_mc_req_name_attrs_cleanup, mc->pool);
+    }
+
+    mc->required_name_attrs[count] = apr_pstrndup(mc->pool, name.value,
+                                                  name.length);
+    mc->required_name_attrs[count + 1] = NULL;
+
+    mc->required_name_vals[count] = apr_pstrndup(mc->pool, value.value,
+                                                 value.length);
+    mc->required_name_vals[count + 1] = NULL;
+
+    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, req,
+                  "found name attribute '%s'='%s'",
+                  mc->required_name_attrs[count],
+                  mc->required_name_vals[count]);
+}
+
 static void mc_add_name_attribute(struct mag_conn *mc,
                                   const char *name, const char *value)
 {
@@ -218,6 +264,51 @@ static void mag_add_json_name_attr(request_rec *req, bool first,
 
 gss_buffer_desc empty_buffer = GSS_C_EMPTY_BUFFER;
 
+void mag_get_required_name_attributes(request_rec *req, struct mag_config *cfg,
+                                      gss_name_t name, struct mag_conn *mc)
+{
+    uint32_t maj, min;
+    gss_buffer_set_t attrs = GSS_C_NO_BUFFER_SET;
+
+    if (!cfg->required_na_expr) {
+        return;
+    }
+
+    maj = gss_inquire_name(&min, name, NULL, NULL, &attrs);
+    if (GSS_ERROR(maj)) {
+        char *error = mag_error(req->pool, "gss_inquire_name() failed",
+                                maj, min);
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, req, "%s", error);
+        apr_table_set(mc->env, "GSS_NAME_ATTR_ERROR", error);
+        return;
+    }
+
+    if (!attrs || attrs->count == 0) {
+        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, req, "no name attributes found");
+        return;
+    }
+
+    for (int i = 0; i < attrs->count; i++) {
+        struct name_attr attr;
+        memset(&attr, 0, sizeof(struct name_attr));
+        attr.name.length = attrs->elements[i].length;
+        attr.name.value = attrs->elements[i].value;
+        attr.number = 0;
+        attr.more = -1;
+        do {
+            attr.number++;
+            attr.value = empty_buffer;
+            attr.display_value = empty_buffer;
+            if (!mag_get_name_attr(req, name, &attr)) {
+                break;
+            }
+            mc_add_req_name_attribute(req, mc, attr.name, attr.value);
+            gss_release_buffer(&min, &attr.value);
+            gss_release_buffer(&min, &attr.display_value);
+        } while (attr.more != 0);
+    }
+}
+
 void mag_get_name_attributes(request_rec *req, struct mag_config *cfg,
                              gss_name_t name, struct mag_conn *mc)
 {
@@ -366,6 +457,19 @@ void mag_export_req_env(request_rec *req, apr_table_t *env)
 
     for (int i = 0; i < arr->nelts; ++i)
         apr_table_set(req->subprocess_env, elts[i].key, elts[i].val);
+}
+
+void mag_set_req_attr_fail(request_rec *req, struct mag_config *cfg,
+                           struct mag_conn *mc)
+{
+    apr_table_set(mc->env, "GSS_NAME", mc->gss_name);
+    apr_table_set(mc->env, "GSS_NAME_ATTR_ERROR",
+                  "required name attributes check unsatisfied");
+    req->ap_auth_type = (char *) mag_str_auth_type(mc->auth_type);
+    req->user = apr_pstrdup(req->pool, mc->user_name);
+
+    ap_set_module_config(req->request_config, &auth_gssapi_module, mc->env);
+    mag_export_req_env(req, mc->env);
 }
 
 void mag_set_req_data(request_rec *req,

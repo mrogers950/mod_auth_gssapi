@@ -1,4 +1,4 @@
-AM_CPPFLAGS = -I $(srcdir)/asn1c
+AM_CPPFLAGS = -I $(srcdir)/asn1c -I $(srcdir)/lex
 
 magdir = $(APXS_LIBEXECDIR)
 mag_LTLIBRARIES = \
@@ -12,7 +12,8 @@ mod_auth_gssapi_la_SOURCES = \
 mod_auth_gssapi_la_CFLAGS = \
     $(MAG_CFLAGS)
 mod_auth_gssapi_la_LIBADD = \
-    asn1c/libmagasn1.la
+    asn1c/libmagasn1.la \
+    lex/libparser.a
 mod_auth_gssapi_la_LDFLAGS = \
     $(MAG_LIBS) \
     -avoid-version \
