@@ -1177,7 +1177,6 @@ static int mag_complete(struct mag_req_cfg *req_cfg, struct mag_conn *mc,
     mc->expiration = time(NULL) + vtime;
 
     mag_get_name_attributes(req, cfg, client, mc);
-    mag_get_required_name_attributes(req, cfg, client, mc);
 
     r = mag_verify_name_attributes(cfg->required_na_expr,
                                    mc->required_name_attrs,

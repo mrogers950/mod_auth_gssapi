@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <apr_base64.h>
 int yylex(void);
 typedef struct yy_buffer_state * YY_BUFFER_STATE;
 extern void yyerror(const char **keys, const char **vals,
@@ -21,8 +22,8 @@ extern void yyerror(const char **keys, const char **vals,
 extern int yyparse(const char **keys, const char **vals, int *status);
 extern YY_BUFFER_STATE yy_scan_string(char * str);
 extern void yy_delete_buffer(YY_BUFFER_STATE buffer);
-static int hex2bincmp(const char *hex, size_t hex_len,
-                      unsigned char *bin, size_t bin_len);
+static size_t b64_len(const char *val);
+static char *b64_enc(const char *val, size_t len);
 %}
 
 %union {
@@ -36,6 +37,7 @@ static int hex2bincmp(const char *hex, size_t hex_len,
 %token OR
 %token AND
 %token EQUAL
+%token EQUALBIN
 %token AST
 %token STRING
 %token INT
@@ -77,16 +79,6 @@ requiredkv: STRING EQUAL STRING {
                     if (strcmp($1, keys[i]) != 0) {
                         continue;
                     }
-                    if (($3[0] == '[') && ($3[strlen($3) - 1] == ']')) {
-                        if (hex2bincmp($3 + 1, strlen($3) - 2,
-                                       (unsigned char *)vals[i],
-                                       strlen(vals[i]))) {
-                            ret = 1;
-                            break;
-                        } else {
-                            continue;
-                        }
-                    }
                     if ((strlen($3) == strlen(vals[i])) &&
                         (strcmp($3, vals[i]) == 0)) {
                         ret = 1;
@@ -108,58 +100,50 @@ requiredkv: STRING EQUAL STRING {
             }
             $$ = ret;
           }
+          | STRING EQUALBIN STRING {
+            int ret = 0;
+            if (keys != NULL && vals != NULL) {
+                for (int i = 0; keys[i] != NULL && vals[i] != NULL; i++) {
+                    if (strcmp($1, keys[i]) != 0) {
+                        continue;
+                    }
+                    size_t b64len = b64_len(vals[i]);
+                    if (strlen($3) != b64len) {
+                        continue;
+                    }
+                    char *b64val = b64_enc(vals[i], b64len);
+                    if (!b64val) {
+                        continue;
+                    }
+                    if (strcmp($3, b64val) == 0) {
+                        ret = 1;
+                    }
+                    free(b64val);
+                    if (ret) {
+                        break;
+                    }
+                }
+            }
+            $$ = ret;
+          }
           ;
 
 %%
 
-static int hexchar(unsigned int c)
+static size_t b64_len(const char *val)
 {
-    if (c >= '0' && c <= '9')
-        return c - '0';
-
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-
-    return -1;
+    return apr_base64_encode_len(strlen(val));
 }
 
-/* Convert hex_len of hex characters into binary and memcmp against bin. Return
- * 1 if the hex string is valid and matches, else 0. */
-static int hex2bincmp(const char *hex, size_t hex_len,
-                      unsigned char *bin, size_t bin_len)
+static char *b64_enc(const char *val, size_t len)
 {
-    int r;
-    unsigned char *b;
-    size_t b_len, i;
+    char *b64val = calloc(1, len + 1);
 
-    for (i = 0; i < hex_len && hex[i] != '\0'; i++) {
-        if (hexchar(hex[i]) == -1)
-            return 0;
-    }
+    if (!b64val)
+        return NULL;
 
-    b_len = i;
-    if ((b_len & 1) != 0)
-        return 0;
-
-    b_len /= 2;
-
-    if (b_len != bin_len)
-        return 0;
-
-    b = calloc(b_len, sizeof(*b));
-    if (b == NULL)
-        return 0;
-
-    for (i = 0; i < b_len; i++)
-        b[i] = hexchar(hex[i * 2]) << 4 | hexchar(hex[i * 2 + 1]);
-
-    r = memcmp(b, bin, b_len);
-    free(b);
-
-    return r == 0;
+    apr_base64_encode(b64val, val, strlen(val));
+    return b64val;
 }
 
 /* Return 1 if the given name attributes and values (NULL terminated arrays)

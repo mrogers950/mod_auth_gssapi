@@ -19,6 +19,7 @@
 "and" { return AND; }
 "AND" { return AND; }
 "=" { return EQUAL; }
+":=" { return EQUALBIN; }
 "*" { return AST; }
 [A-Za-z0-9_\-\[\]]+ {
 	yylval.sval = strdup(yytext);

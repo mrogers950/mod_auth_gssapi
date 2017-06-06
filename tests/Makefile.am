@@ -23,4 +23,4 @@ noinst_PROGRAMS = natest
 natest_SOURCES = natest.c
 natest_LDADD = ../src/lex/libparser.a
 natest_CFLAGS = $(MAG_CFLAGS)
-natest_LDFLAGS = $(MAG_LIBS) $(LEXLIB)
+natest_LDFLAGS = $(MAG_LIBS) $(LEXLIB) $(APR_LDFLAGS)
