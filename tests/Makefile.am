@@ -1,4 +1,4 @@
-AM_CPPFLAGS = -I ../src/lex -I ../src
+AM_CPPFLAGS = -I ../src
 
 EXTRA_DIST = \
 	401.html \
@@ -19,8 +19,9 @@ EXTRA_DIST = \
 	natest.sh \
 	$(NULL)
 
-noinst_PROGRAMS = natest
-natest_SOURCES = natest.c
-natest_LDADD = ../src/lex/libparser.a
-natest_CFLAGS = $(MAG_CFLAGS)
-natest_LDFLAGS = $(MAG_LIBS) $(LEXLIB) $(APR_LDFLAGS)
+#BUILT_SOURCES = ../src/parser.h
+#AM_YFLAGS = -d
+#noinst_PROGRAMS = natest
+#natest_SOURCES = natest.c ../src/lex.l ../src/parser.y
+#natest_CFLAGS = $(MAG_CFLAGS)
+#natest_LDFLAGS = $(MAG_LIBS) $(LEXLIB)

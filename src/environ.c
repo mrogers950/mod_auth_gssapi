@@ -285,7 +285,7 @@ void mag_get_name_attributes(request_rec *req, struct mag_config *cfg,
     char *json = NULL;
     char *error;
     int count = 0, map_count = 0;
-    int i, j;
+    int i;
 
     if (!cfg->name_attributes && !cfg->required_na_expr) {
         return;

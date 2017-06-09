@@ -94,6 +94,6 @@ AC_SUBST([MAG_CFLAGS])
 AC_SUBST([MAG_LIBS])
 AC_SUBST([LIBTOOL])
 
-AC_CONFIG_FILES([Makefile src/Makefile src/asn1c/Makefile src/lex/Makefile tests/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile src/asn1c/Makefile tests/Makefile])
 
 AC_OUTPUT

@@ -79,6 +79,7 @@ KRB5_CONF_TEMPLATE = '''
 [realms]
   ${TESTREALM} = {
     kdc =${WRAP_HOSTNAME}
+    pkinit_anchors = FILE:${TESTDIR}/${PKINIT_CA}
   }
 
 [domain_realm]
@@ -95,6 +96,11 @@ KDC_CONF_TEMPLATE = '''
  kdc_ports = 88
  kdc_tcp_ports = 88
  restrict_anonymous_to_tgt = true
+ pkinit_identity = FILE:${TESTDIR}/${PKINIT_KDC_CERT},${TESTDIR}/${PKINIT_KEY}
+ pkinit_anchors = FILE:${TESTDIR}/${PKINIT_CA}
+ pkinit_indicator = na1
+ pkinit_indicator = na2
+ pkinit_indicator = na3
 
 [realms]
  ${TESTREALM} = {
@@ -110,6 +116,216 @@ KDC_CONF_TEMPLATE = '''
 [logging]
   kdc = FILE:${KDCLOG}
 '''
+
+PKINIT_CA = 'cacert.pem'
+PKINIT_KEY = 'key.pem'
+PKINIT_USER_REQ = 'user.csr'
+PKINIT_USER_CERT = 'user.pem'
+PKINIT_USER2_REQ = 'user2.csr'
+PKINIT_USER2_CERT = 'user2.pem'
+PKINIT_KDC_REQ = 'kdccert.csr'
+PKINIT_KDC_CERT = 'kdccert.pem'
+
+OPENSSLCNF_TEMPLATE = '''
+[req]
+prompt = no
+distinguished_name = $$ENV::O_SUBJECT
+
+[ca]
+CN = CA
+C = US
+OU = Insecure test CA do not use
+O = ${TESTREALM}
+
+[kdc]
+C = US
+O = ${TESTREALM}
+CN = KDC
+
+[user]
+C = US
+O = ${TESTREALM}
+CN = maguser3
+
+[user2]
+C = US
+O = ${TESTREALM}
+CN = maguser2
+
+[exts_ca]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+keyUsage = nonRepudiation,digitalSignature,keyEncipherment,dataEncipherment,keyAgreement,keyCertSign,cRLSign
+basicConstraints = critical,CA:TRUE
+
+[components_kdc]
+0.component=GeneralString:krbtgt
+1.component=GeneralString:${TESTREALM}
+
+[princ_kdc]
+nametype=EXPLICIT:0,INTEGER:1
+components=EXPLICIT:1,SEQUENCE:components_kdc
+
+[krb5princ_kdc]
+realm=EXPLICIT:0,GeneralString:${TESTREALM}
+princ=EXPLICIT:1,SEQUENCE:princ_kdc
+
+[exts_kdc]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+keyUsage = nonRepudiation,digitalSignature,keyEncipherment,keyAgreement
+basicConstraints = critical,CA:FALSE
+subjectAltName = otherName:1.3.6.1.5.2.2;SEQUENCE:krb5princ_kdc
+extendedKeyUsage = 1.3.6.1.5.2.3.5
+
+[components_client]
+component=GeneralString:maguser3
+
+[princ_client]
+nametype=EXPLICIT:0,INTEGER:1
+components=EXPLICIT:1,SEQUENCE:components_client
+
+[krb5princ_client]
+realm=EXPLICIT:0,GeneralString:${TESTREALM}
+princ=EXPLICIT:1,SEQUENCE:princ_client
+
+[exts_client]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+keyUsage = nonRepudiation,digitalSignature,keyEncipherment,keyAgreement
+basicConstraints = critical,CA:FALSE
+subjectAltName = otherName:1.3.6.1.5.2.2;SEQUENCE:krb5princ_client
+extendedKeyUsage = 1.3.6.1.5.2.3.4
+
+[components_client2]
+component=GeneralString:maguser2
+
+[princ_client2]
+nametype=EXPLICIT:0,INTEGER:1
+components=EXPLICIT:1,SEQUENCE:components_client2
+
+[krb5princ_client2]
+realm=EXPLICIT:0,GeneralString:${TESTREALM}
+princ=EXPLICIT:1,SEQUENCE:princ_client2
+
+[exts_client2]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+keyUsage = nonRepudiation,digitalSignature,keyEncipherment,keyAgreement
+basicConstraints = critical,CA:FALSE
+subjectAltName = otherName:1.3.6.1.5.2.2;SEQUENCE:krb5princ_client2
+extendedKeyUsage = 1.3.6.1.5.2.3.4
+'''
+
+def setup_test_certs(testdir, testenv, testlog):
+
+    opensslcnf = os.path.join(testdir, 'openssl.cnf')
+    pkinit_key = os.path.join(testdir, PKINIT_KEY)
+    pkinit_ca = os.path.join(testdir, PKINIT_CA)
+    pkinit_kdc_req = os.path.join(testdir, PKINIT_KDC_REQ)
+    pkinit_user_req = os.path.join(testdir, PKINIT_USER_REQ)
+    pkinit_user2_req = os.path.join(testdir, PKINIT_USER2_REQ)
+    pkinit_kdc_cert = os.path.join(testdir, PKINIT_KDC_CERT)
+    pkinit_user_cert = os.path.join(testdir, PKINIT_USER_CERT)
+    pkinit_user2_cert = os.path.join(testdir, PKINIT_USER2_CERT)
+#    pkinit_user_p12 = os.path.join(testdir, PKINIT_USER_P12)
+
+    cnf = Template(OPENSSLCNF_TEMPLATE)
+    text = cnf.substitute({'TESTREALM': TESTREALM})
+    with open(opensslcnf, 'w+') as f:
+        f.write(text)
+
+    with (open(testlog, 'a')) as logfile:
+        print pkinit_key
+        cmd = subprocess.Popen(["openssl", "genrsa", "-out", pkinit_key,
+                                "2048"], stdout=logfile,
+                               stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating CA RSA key failed')
+
+        testenv.update({'O_SUBJECT': 'ca'})
+        cmd = subprocess.Popen(["openssl", "req", "-config", opensslcnf,
+                                "-new", "-x509", "-extensions", "exts_ca",
+                                "-set_serial", "1", "-days", "100",
+                                "-key", pkinit_key, "-out", pkinit_ca],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating CA certificate failed')
+
+        testenv.update({'O_SUBJECT': 'kdc'})
+        cmd = subprocess.Popen(["openssl", "req", "-config", opensslcnf,
+                                "-new", "-subj", "/CN=kdc",
+                                "-key", pkinit_key, "-out", pkinit_kdc_req],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating KDC req failed')
+
+        cmd = subprocess.Popen(["openssl", "x509", "-extfile", opensslcnf,
+                                "-extensions", "exts_kdc", "-set_serial", "2",
+                                "-days", "100", "-req", "-CA", pkinit_ca,
+                                "-CAkey", pkinit_key, "-out", pkinit_kdc_cert,
+                                "-in", pkinit_kdc_req],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating KDC certificate failed')
+
+        testenv.update({'O_SUBJECT': 'user'})
+        cmd = subprocess.Popen(["openssl", "req", "-config", opensslcnf,
+                                "-new", "-subj", "/CN=user",
+                                "-key", pkinit_key, "-out", pkinit_user_req],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating client req failed')
+
+        cmd = subprocess.Popen(["openssl", "x509", "-extfile", opensslcnf,
+                                "-extensions", "exts_client", "-set_serial", "3",
+                                "-days", "100", "-req", "-CA", pkinit_ca,
+                                "-CAkey", pkinit_key, "-out", pkinit_user_cert,
+                                "-in", pkinit_user_req],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating client certificate failed')
+
+        testenv.update({'O_SUBJECT': 'user2'})
+        cmd = subprocess.Popen(["openssl", "req", "-config", opensslcnf,
+                                "-new", "-subj", "/CN=user2",
+                                "-key", pkinit_key, "-out", pkinit_user2_req],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating client req failed')
+
+        cmd = subprocess.Popen(["openssl", "x509", "-extfile", opensslcnf,
+                                "-extensions", "exts_client2", "-set_serial", "4",
+                                "-days", "100", "-req", "-CA", pkinit_ca,
+                                "-CAkey", pkinit_key, "-out", pkinit_user2_cert,
+                                "-in", pkinit_user2_req],
+                               stdout=logfile, stderr=logfile, env=testenv,
+                               preexec_fn=os.setsid)
+        cmd.wait()
+        if cmd.returncode != 0:
+            raise ValueError('Generating client certificate failed')
+#        cmd = subprocess.Popen(["openssl", "pkcs12", "-export", "-in",
+#                                pkinit_user_cert, "-inkey", pkinit_key, "-out",
+#                                pkinit_user_p12, "-passout", "pass:"],
+#                               stdout=logfile, stderr=logfile, env=testenv,
+#                               preexec_fn=os.setsid)
+#        cmd.wait()
+#        if cmd.returncode != 0:
+#            raise ValueError('Generating client e failed')
 
 
 def setup_kdc(testdir, wrapenv):
@@ -130,15 +346,23 @@ def setup_kdc(testdir, wrapenv):
                          'TESTDIR': testdir,
                          'KDCDIR': kdcdir,
                          'KDC_DBNAME': KDC_DBNAME,
-                         'WRAP_HOSTNAME': WRAP_HOSTNAME})
+                         'WRAP_HOSTNAME': WRAP_HOSTNAME,
+						 'PKINIT_CA': PKINIT_CA,
+						 'PKINIT_USER_CERT': PKINIT_USER_CERT,
+						 'PKINIT_USER2_CERT': PKINIT_USER2_CERT,
+						 'PKINIT_KEY': PKINIT_KEY})
     with open(krb5conf, 'w+') as f:
         f.write(text)
 
     t = Template(KDC_CONF_TEMPLATE)
     text = t.substitute({'TESTREALM': TESTREALM,
+                         'TESTDIR': testdir,
                          'KDCDIR': kdcdir,
                          'KDCLOG': testlog,
-                         'KDC_STASH': KDC_STASH})
+                         'KDC_STASH': KDC_STASH,
+						 'PKINIT_CA': PKINIT_CA,
+						 'PKINIT_KDC_CERT': PKINIT_KDC_CERT,
+						 'PKINIT_KEY': PKINIT_KEY})
     with open(kdcconf, 'w+') as f:
         f.write(text)
 
@@ -156,6 +380,8 @@ def setup_kdc(testdir, wrapenv):
     ksetup.wait()
     if ksetup.returncode != 0:
         raise ValueError('KDC Setup failed')
+
+    setup_test_certs(testdir, kdcenv, testlog)
 
     with (open(testlog, 'a')) as logfile:
         kdcproc = subprocess.Popen(['krb5kdc', '-n'],
@@ -178,6 +404,7 @@ USR_NAME = "maguser"
 USR_PWD = "magpwd"
 USR_NAME_2 = "maguser2"
 USR_PWD_2 = "magpwd2"
+USR_NAME_3 = "maguser3"
 SVC_KTNAME = "httpd/http.keytab"
 KEY_TYPE = "aes256-cts-hmac-sha1-96:normal"
 
@@ -200,6 +427,10 @@ def setup_keys(tesdir, env):
         kadmin_local(cmd, env, logfile)
 
     cmd = "addprinc -pw %s -e %s %s" % (USR_PWD_2, KEY_TYPE, USR_NAME_2)
+    with (open(testlog, 'a')) as logfile:
+        kadmin_local(cmd, env, logfile)
+
+    cmd = "addprinc -nokey -e %s %s" % (KEY_TYPE, USR_NAME_3)
     with (open(testlog, 'a')) as logfile:
         kadmin_local(cmd, env, logfile)
 
@@ -258,6 +489,9 @@ def setup_http(testdir, so_dir, wrapenv):
 def kinit_user(testdir, kdcenv):
     testlog = os.path.join(testdir, 'kinit.log')
     ccache = os.path.join(testdir, 'k5ccache')
+#    pkinit_user2_cert = os.path.join(testdir, PKINIT_USER2_CERT)
+#    pkinit_key = os.path.join(testdir, PKINIT_KEY)
+#    id2 = "X509_user_identity=FILE:" + pkinit_user2_cert + "," + pkinit_key
     testenv = {'KRB5CCNAME': ccache}
     testenv.update(kdcenv)
 
@@ -270,6 +504,35 @@ def kinit_user(testdir, kdcenv):
         kinit.wait()
         if kinit.returncode != 0:
             raise ValueError('kinit failed')
+
+#        kinit = subprocess.Popen(["kinit", USR_NAME_2, "-X", id2],
+#                                 stdin=subprocess.PIPE,
+#                                 stdout=logfile, stderr=logfile,
+#                                 env=testenv, preexec_fn=os.setsid)
+#        kinit.communicate('%s\n' % USR_PWD_2)
+#        kinit.wait()
+#        if kinit.returncode != 0:
+#            raise ValueError('kinit failed')
+    return testenv
+
+def kinit_user3(testdir, kdcenv):
+    testlog = os.path.join(testdir, 'kinit.log')
+    ccache = os.path.join(testdir, 'k5ccache2')
+    pkinit_user3_cert = os.path.join(testdir, PKINIT_USER_CERT)
+    pkinit_key = os.path.join(testdir, PKINIT_KEY)
+    id3 = "X509_user_identity=FILE:" + pkinit_user3_cert + "," + pkinit_key
+    testenv = {'KRB5CCNAME': ccache}
+    testenv.update(kdcenv)
+    with (open(testlog, 'a')) as logfile:
+        logfile.write('PKINIT for maguser3\n')
+        kinit = subprocess.Popen(["kinit", USR_NAME_3, "-X", id3],
+                                 stdin=subprocess.PIPE,
+                                 stdout=logfile, stderr=logfile,
+                                 env=testenv, preexec_fn=os.setsid)
+        kinit.wait()
+        if kinit.returncode != 0:
+            raise ValueError('kinit failed')
+
     return testenv
 
 
@@ -308,6 +571,23 @@ def test_spnego_auth(testdir, testenv, testlog):
             sys.stderr.write('SPNEGO No Auth: FAILED\n')
         else:
             sys.stderr.write('SPNEGO No Auth: SUCCESS\n')
+
+
+def test_required_name_attr(testdir, testenv, testlog):
+    required_name_attr_dir = os.path.join(testdir, 'httpd', 'html',
+                                          'required_name_attr')
+    os.mkdir(required_name_attr_dir)
+    shutil.copy('tests/index.html', required_name_attr_dir)
+
+    with (open(testlog, 'a')) as logfile:
+        tattr = subprocess.Popen(["tests/t_required_name_attr.py"],
+                                 stdout=logfile, stderr=logfile, env=testenv,
+                                 preexec_fn=os.setsid)
+        tattr.wait()
+        if tattr.returncode != 0:
+            sys.stderr.write('Required Name Attr: FAILED\n')
+        else:
+            sys.stderr.write('Required Name Attr: SUCCESS\n')
 
 
 def test_spnego_rewrite(testdir, testenv, testlog):
@@ -446,6 +726,8 @@ if __name__ == '__main__':
         test_spnego_negotiate_once(testdir, testenv, testlog)
 
         test_bad_acceptor_name(testdir, testenv, testlog)
+        testenv = kinit_user3(testdir, testenv)
+        test_required_name_attr(testdir, testenv, testlog)
 
         testenv = {'MAG_USER_NAME': USR_NAME,
                    'MAG_USER_PASSWORD': USR_PWD,

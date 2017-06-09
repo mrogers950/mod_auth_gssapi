@@ -5,7 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "parser.h"
+#include <apr_base64.h>
+#include "../src/mag_parse.h"
 
 void usage(char *name)
 {
